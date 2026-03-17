@@ -307,7 +307,27 @@ func queryV6Counts(db *sql.DB, matchable bool) (map[string]int, error) {
 		}
 		counts[id] = count
 	}
-	return counts, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Enrichment providers store data in their own tables, not vulnerability_handles.
+	enrichmentTables := map[string]string{
+		"epss": "epss_handles",
+		"kev":  "known_exploited_vulnerability_handles",
+	}
+	for provider, table := range enrichmentTables {
+		if _, exists := counts[provider]; !exists {
+			continue
+		}
+		var count int
+		err := db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count) //nolint:gosec // table name is hardcoded above
+		if err == nil && count > 0 {
+			counts[provider] = count
+		}
+	}
+
+	return counts, nil
 }
 
 func queryV5Counts(db *sql.DB) (map[string]int, error) {

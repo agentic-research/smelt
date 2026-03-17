@@ -92,28 +92,28 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	fmt.Println(strings.Repeat("-", 62))
 
 	for _, p := range result.Common {
-		sign := ""
-		if p.Delta > 0 {
-			sign = "+"
+		if p.CountA == 0 && p.CountB == 0 {
+			continue
 		}
-		fmt.Printf("%-30s %10d %10d %10s\n", p.Provider, p.CountA, p.CountB, sign+fmt.Sprint(p.Delta))
+		fmt.Printf("%-30s %10d %10d %10s\n", p.Provider, p.CountA, p.CountB, formatDelta(p.Delta))
 	}
 
 	for _, p := range result.OnlyInA {
-		fmt.Printf("%-30s %10d %10s %10s\n", p.Provider+" (A only)", p.CountA, "-", fmt.Sprintf("-%d", p.CountA))
+		if p.CountA == 0 {
+			continue
+		}
+		fmt.Printf("%-30s %10d %10s %10s\n", p.Provider+" (A only)", p.CountA, "-", formatDelta(-p.CountA))
 	}
 
 	for _, p := range result.OnlyInB {
-		fmt.Printf("%-30s %10s %10d %10s\n", p.Provider+" (B only)", "-", p.CountB, fmt.Sprintf("+%d", p.CountB))
+		if p.CountB == 0 {
+			continue
+		}
+		fmt.Printf("%-30s %10s %10d %10s\n", p.Provider+" (B only)", "-", p.CountB, formatDelta(p.CountB))
 	}
 
 	fmt.Println(strings.Repeat("-", 62))
-	totalDelta := result.TotalB - result.TotalA
-	sign := ""
-	if totalDelta > 0 {
-		sign = "+"
-	}
-	fmt.Printf("%-30s %10d %10d %10s\n", "TOTAL", result.TotalA, result.TotalB, sign+fmt.Sprint(totalDelta))
+	fmt.Printf("%-30s %10d %10d %10s\n", "TOTAL", result.TotalA, result.TotalB, formatDelta(result.TotalB-result.TotalA))
 
 	if result.StateComparison != nil {
 		sc := result.StateComparison
@@ -123,15 +123,21 @@ func runDiff(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  State changes:  %d\n", sc.StateChanges)
 		fmt.Printf("  Conflicts A:    %d\n", sc.ConflictsA)
 		fmt.Printf("  Conflicts B:    %d\n", sc.ConflictsB)
-		conflictDelta := sc.ConflictsB - sc.ConflictsA
-		csign := ""
-		if conflictDelta > 0 {
-			csign = "+"
-		}
-		fmt.Printf("  Conflict delta: %s%d\n", csign, conflictDelta)
+		fmt.Printf("  Conflict delta: %s\n", formatDelta(sc.ConflictsB-sc.ConflictsA))
 	}
 
 	return nil
+}
+
+func formatDelta(d int) string {
+	switch {
+	case d > 0:
+		return fmt.Sprintf("+%d", d)
+	case d < 0:
+		return fmt.Sprintf("%d", d)
+	default:
+		return "0"
+	}
 }
 
 func runDiffProvider(pathA, pathB, provider string) error {

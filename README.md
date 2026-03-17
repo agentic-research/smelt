@@ -87,4 +87,4 @@ smelt reads the grype-db v6 schema directly (`providers`, `vulnerability_handles
 
 ## License
 
-[AGPL-3.0](LICENSE)
+[Apache-2.0](LICENSE)
