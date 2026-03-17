@@ -100,11 +100,11 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, p := range result.OnlyInA {
-		fmt.Printf("%-30s %10d %10s %10s\n", p.Provider+" (removed)", p.CountA, "-", fmt.Sprintf("-%d", p.CountA))
+		fmt.Printf("%-30s %10d %10s %10s\n", p.Provider+" (A only)", p.CountA, "-", fmt.Sprintf("-%d", p.CountA))
 	}
 
 	for _, p := range result.OnlyInB {
-		fmt.Printf("%-30s %10s %10d %10s\n", p.Provider+" (added)", "-", p.CountB, fmt.Sprintf("+%d", p.CountB))
+		fmt.Printf("%-30s %10s %10d %10s\n", p.Provider+" (B only)", "-", p.CountB, fmt.Sprintf("+%d", p.CountB))
 	}
 
 	fmt.Println(strings.Repeat("-", 62))
