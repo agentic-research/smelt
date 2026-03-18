@@ -2,6 +2,7 @@ package inspect
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"sort"
 
@@ -10,40 +11,58 @@ import (
 
 // Result holds everything the DB knows about a CVE.
 type Result struct {
-	CVE           string
-	DBBuildTime   string
-	SchemaVersion string
-	Aliases       []string
-	Providers     []ProviderEntry
+	CVE           string          `json:"cve"`
+	DBBuildTime   string          `json:"db_build_time"`
+	SchemaVersion string          `json:"schema_version"`
+	Aliases       []string        `json:"aliases,omitempty"`
+	Providers     []ProviderEntry `json:"providers"`
 }
 
 // ProviderEntry holds one provider's data for this CVE.
 type ProviderEntry struct {
-	Provider       string
-	VulnName       string // may differ from CVE (e.g. GHSA-xxx)
-	Status         string
-	PublishedDate  string
-	ModifiedDate   string
-	PackageMatches int
-	CPEMatches     int
-	Matchable      bool
-	Packages       []PackageMatch
-	CPEs           []CPEMatch
+	Provider       string         `json:"provider"`
+	VulnName       string         `json:"vuln_name"`       // may differ from CVE (e.g. GHSA-xxx)
+	Status         string         `json:"status"`
+	PublishedDate  string         `json:"published_date"`
+	ModifiedDate   string         `json:"modified_date"`
+	PackageMatches int            `json:"package_matches"`
+	CPEMatches     int            `json:"cpe_matches"`
+	Matchable      bool           `json:"matchable"`
+	Packages       []PackageMatch `json:"packages,omitempty"`
+	CPEs           []CPEMatch     `json:"cpes,omitempty"`
 }
 
 // PackageMatch is a single affected package entry.
 type PackageMatch struct {
-	Name      string
-	Ecosystem string
-	Distro    string
-	FixState  string
+	Name       string `json:"name"`
+	Ecosystem  string `json:"ecosystem"`
+	Distro     string `json:"distro,omitempty"`
+	FixState   string `json:"fix_state,omitempty"`
+	FixVersion string `json:"fix_version,omitempty"`
+	Constraint string `json:"constraint,omitempty"`
 }
 
 // CPEMatch is a single affected CPE entry.
 type CPEMatch struct {
-	Vendor         string
-	Product        string
-	TargetSoftware string
+	Vendor         string `json:"vendor"`
+	Product        string `json:"product"`
+	TargetSoftware string `json:"target_software,omitempty"`
+	FixState       string `json:"fix_state,omitempty"`
+	FixVersion     string `json:"fix_version,omitempty"`
+	Constraint     string `json:"constraint,omitempty"`
+}
+
+// blobData is the minimal structure we parse from affected_*_handle blobs.
+type blobData struct {
+	Ranges []struct {
+		Version struct {
+			Constraint string `json:"constraint"`
+		} `json:"version"`
+		Fix struct {
+			State   string `json:"state"`
+			Version string `json:"version"`
+		} `json:"fix"`
+	} `json:"ranges"`
 }
 
 // CVE inspects a vulnerability database for everything it knows about a CVE.
@@ -171,15 +190,19 @@ func queryProviderEntries(db *sql.DB, name string) ([]ProviderEntry, error) {
 		// Packages
 		pkgRows, err := db.Query(`
 			SELECT p.name, p.ecosystem,
-				COALESCE(os.name || ':' || os.major_version, '')
+				COALESCE(os.name || ':' || os.major_version, ''),
+				COALESCE(b.value, '')
 			FROM affected_package_handles ap
 			JOIN packages p ON ap.package_id = p.id
 			LEFT JOIN operating_systems os ON ap.operating_system_id = os.id
+			LEFT JOIN blobs b ON ap.blob_id = b.id
 			WHERE ap.vulnerability_id = ?`, vulnID)
 		if err == nil {
 			for pkgRows.Next() {
 				var pm PackageMatch
-				if err := pkgRows.Scan(&pm.Name, &pm.Ecosystem, &pm.Distro); err == nil {
+				var blob string
+				if err := pkgRows.Scan(&pm.Name, &pm.Ecosystem, &pm.Distro, &blob); err == nil {
+					parseFixInfo(blob, &pm.FixState, &pm.FixVersion, &pm.Constraint)
 					e.Packages = append(e.Packages, pm)
 				}
 			}
@@ -189,14 +212,17 @@ func queryProviderEntries(db *sql.DB, name string) ([]ProviderEntry, error) {
 
 		// CPEs
 		cpeRows, err := db.Query(`
-			SELECT c.vendor, c.product, COALESCE(c.target_software, '')
+			SELECT c.vendor, c.product, COALESCE(c.target_software, ''), COALESCE(b.value, '')
 			FROM affected_cpe_handles ac
 			JOIN cpes c ON ac.cpe_id = c.id
+			LEFT JOIN blobs b ON ac.blob_id = b.id
 			WHERE ac.vulnerability_id = ?`, vulnID)
 		if err == nil {
 			for cpeRows.Next() {
 				var cm CPEMatch
-				if err := cpeRows.Scan(&cm.Vendor, &cm.Product, &cm.TargetSoftware); err == nil {
+				var blob string
+				if err := cpeRows.Scan(&cm.Vendor, &cm.Product, &cm.TargetSoftware, &blob); err == nil {
+					parseFixInfo(blob, &cm.FixState, &cm.FixVersion, &cm.Constraint)
 					e.CPEs = append(e.CPEs, cm)
 				}
 			}
@@ -209,4 +235,18 @@ func queryProviderEntries(db *sql.DB, name string) ([]ProviderEntry, error) {
 	}
 
 	return entries, rows.Err()
+}
+
+func parseFixInfo(blob string, state, version, constraint *string) {
+	if blob == "" {
+		return
+	}
+	var bd blobData
+	if err := json.Unmarshal([]byte(blob), &bd); err != nil || len(bd.Ranges) == 0 {
+		return
+	}
+	r := bd.Ranges[0]
+	*state = r.Fix.State
+	*version = r.Fix.Version
+	*constraint = r.Version.Constraint
 }

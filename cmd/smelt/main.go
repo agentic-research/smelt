@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -16,6 +17,7 @@ var (
 	diffStateB    string
 	diffProvider  string
 	diffMatchable bool
+	outputJSON    bool
 
 	version = "dev"
 	commit  = "none"
@@ -54,17 +56,20 @@ Examples:
 }
 
 var inspectCmd = &cobra.Command{
-	Use:   "inspect <db> <cve>",
+	Use:   "inspect <db> [db-b] <cve>",
 	Short: "Show everything a database knows about a CVE",
 	Long: `Inspect shows all providers, packages, CPEs, and aliases for a CVE.
 
 Resolves GHSA IDs to CVEs via the alias table. Reports DB build time
 and whether each provider entry is matchable by grype.
 
+Pass two databases to compare the same CVE side by side.
+
 Examples:
   smelt inspect vulnerability.db CVE-2026-2673
-  smelt inspect vulnerability.db GHSA-xxxx-yyyy-zzzz`,
-	Args: cobra.ExactArgs(2),
+  smelt inspect vulnerability.db GHSA-xxxx-yyyy-zzzz
+  smelt inspect db-a.db db-b.db CVE-2026-2673`,
+	Args: cobra.RangeArgs(2, 3),
 	RunE: runInspect,
 }
 
@@ -81,10 +86,18 @@ func init() {
 	diffCmd.Flags().StringVar(&diffStateB, "state-b", "", "Path to state.db for second database")
 	diffCmd.Flags().StringVar(&diffProvider, "provider", "", "Drill into CVE-level diff for a specific provider")
 	diffCmd.Flags().BoolVar(&diffMatchable, "matchable", false, "Only count entries with affected packages or CPEs (effective coverage)")
+	diffCmd.Flags().BoolVar(&outputJSON, "json", false, "Output result as JSON")
+	inspectCmd.Flags().BoolVar(&outputJSON, "json", false, "Output result as JSON")
 
 	rootCmd.AddCommand(diffCmd)
 	rootCmd.AddCommand(inspectCmd)
 	rootCmd.AddCommand(versionCmd)
+}
+
+func printJSON(v interface{}) error {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(v)
 }
 
 func runDiff(cmd *cobra.Command, args []string) error {
@@ -103,6 +116,10 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	result, err := diff.CompareDBs(args[0], args[1], opts...)
 	if err != nil {
 		return err
+	}
+
+	if outputJSON {
+		return printJSON(result)
 	}
 
 	fmt.Printf("%-30s %10s %10s %10s\n", "PROVIDER", "DB-A", "DB-B", "DELTA")
@@ -146,6 +163,20 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func formatFix(state, version, constraint string) string {
+	if state == "" {
+		return ""
+	}
+	s := "  " + state
+	if version != "" {
+		s += " @ " + version
+	}
+	if constraint != "" {
+		s += " (" + constraint + ")"
+	}
+	return s
+}
+
 func formatDelta(d int) string {
 	switch {
 	case d > 0:
@@ -165,6 +196,10 @@ func runDiffProvider(pathA, pathB, provider string) error {
 	result, err := diff.DrillProvider(pathA, pathB, provider, opts...)
 	if err != nil {
 		return err
+	}
+
+	if outputJSON {
+		return printJSON(result)
 	}
 
 	fmt.Printf("Provider: %s\n", result.Provider)
@@ -191,9 +226,17 @@ func runDiffProvider(pathA, pathB, provider string) error {
 }
 
 func runInspect(cmd *cobra.Command, args []string) error {
+	if len(args) == 3 {
+		return runInspectCompare(args[0], args[1], args[2])
+	}
+
 	result, err := inspect.CVE(args[0], args[1])
 	if err != nil {
 		return err
+	}
+
+	if outputJSON {
+		return printJSON(result)
 	}
 
 	fmt.Printf("CVE:       %s\n", result.CVE)
@@ -226,16 +269,69 @@ func runInspect(cmd *cobra.Command, args []string) error {
 			if pkg.Distro != "" {
 				distro = " (" + pkg.Distro + ")"
 			}
-			fmt.Printf("      pkg: %s [%s]%s\n", pkg.Name, pkg.Ecosystem, distro)
+			fix := formatFix(pkg.FixState, pkg.FixVersion, pkg.Constraint)
+			fmt.Printf("      pkg: %s [%s]%s%s\n", pkg.Name, pkg.Ecosystem, distro, fix)
 		}
 		for _, cpe := range p.CPEs {
 			ts := ""
 			if cpe.TargetSoftware != "" {
 				ts = " target=" + cpe.TargetSoftware
 			}
-			fmt.Printf("      cpe: %s:%s%s\n", cpe.Vendor, cpe.Product, ts)
+			fix := formatFix(cpe.FixState, cpe.FixVersion, cpe.Constraint)
+			fmt.Printf("      cpe: %s:%s%s%s\n", cpe.Vendor, cpe.Product, ts, fix)
 		}
 	}
+
+	return nil
+}
+
+func runInspectCompare(pathA, pathB, cve string) error {
+	resultA, errA := inspect.CVE(pathA, cve)
+	resultB, errB := inspect.CVE(pathB, cve)
+
+	if errA != nil && errB != nil {
+		return fmt.Errorf("%s not found in either database", cve)
+	}
+
+	printInspectSide := func(label string, r *inspect.Result, err error) {
+		fmt.Printf("=== %s ===\n", label)
+		if err != nil {
+			fmt.Printf("  (not found)\n\n")
+			return
+		}
+		fmt.Printf("  DB Built:  %s\n", r.DBBuildTime)
+		fmt.Printf("  Providers: %d\n", len(r.Providers))
+		matchable := 0
+		totalPkg := 0
+		totalCPE := 0
+		for _, p := range r.Providers {
+			if p.Matchable {
+				matchable++
+			}
+			totalPkg += p.PackageMatches
+			totalCPE += p.CPEMatches
+		}
+		fmt.Printf("  Matchable: %d/%d\n", matchable, len(r.Providers))
+		fmt.Printf("  Packages:  %d\n", totalPkg)
+		fmt.Printf("  CPEs:      %d\n\n", totalCPE)
+
+		for _, p := range r.Providers {
+			icon := "x"
+			if p.Matchable {
+				icon = "~"
+			}
+			name := p.Provider
+			if p.VulnName != r.CVE {
+				name = fmt.Sprintf("%s (via %s)", p.Provider, p.VulnName)
+			}
+			fmt.Printf("  [%s] %s  status=%s  pkg=%d  cpe=%d\n", icon, name, p.Status, p.PackageMatches, p.CPEMatches)
+		}
+		fmt.Println()
+	}
+
+	fmt.Printf("CVE: %s\n\n", cve)
+	printInspectSide("DB-A", resultA, errA)
+	printInspectSide("DB-B", resultB, errB)
 
 	return nil
 }

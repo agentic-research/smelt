@@ -12,29 +12,29 @@ import (
 
 // ProviderDiff holds the comparison for a single provider.
 type ProviderDiff struct {
-	Provider string
-	CountA   int
-	CountB   int
-	Delta    int // CountB - CountA
+	Provider string `json:"provider"`
+	CountA   int    `json:"count_a"`
+	CountB   int    `json:"count_b"`
+	Delta    int    `json:"delta"` // CountB - CountA
 }
 
 // StateComparison holds the result of comparing two state graphs.
 type StateComparison struct {
-	NewCVEs      int
-	RemovedCVEs  int
-	StateChanges int
-	ConflictsA   int
-	ConflictsB   int
+	NewCVEs      int `json:"new_cves"`
+	RemovedCVEs  int `json:"removed_cves"`
+	StateChanges int `json:"state_changes"`
+	ConflictsA   int `json:"conflicts_a"`
+	ConflictsB   int `json:"conflicts_b"`
 }
 
 // Result holds the full comparison between two vulnerability databases.
 type Result struct {
-	Common          []ProviderDiff
-	OnlyInA         []ProviderDiff
-	OnlyInB         []ProviderDiff
-	TotalA          int
-	TotalB          int
-	StateComparison *StateComparison
+	Common          []ProviderDiff   `json:"common"`
+	OnlyInA         []ProviderDiff   `json:"only_in_a"`
+	OnlyInB         []ProviderDiff   `json:"only_in_b"`
+	TotalA          int              `json:"total_a"`
+	TotalB          int              `json:"total_b"`
+	StateComparison *StateComparison `json:"state_comparison,omitempty"`
 }
 
 // Option configures the comparison.
@@ -129,10 +129,10 @@ func CompareDBs(pathA, pathB string, opts ...Option) (*Result, error) {
 
 // ProviderDrillResult holds the CVE-level diff for a single provider.
 type ProviderDrillResult struct {
-	Provider string
-	Common   []string
-	OnlyInA  []string
-	OnlyInB  []string
+	Provider string   `json:"provider"`
+	Common   []string `json:"common"`
+	OnlyInA  []string `json:"only_in_a"`
+	OnlyInB  []string `json:"only_in_b"`
 }
 
 // DrillProvider compares the vulnerability names for a specific provider across two DBs.
