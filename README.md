@@ -95,30 +95,68 @@ Schema:    6.1.4
 Aliases:   GHSA-rxc8-2hfw-w2f5
 Providers: 4
 
-[~] debian  status=active  pkg=6  cpe=0
-      pkg: xz-utils [deb] (debian:12)
-      pkg: xz-utils [deb] (debian:13)
-      ...
-[~] github (via GHSA-rxc8-2hfw-w2f5)  status=active  pkg=1  cpe=0
-      pkg: tukaani-project/xz [go]
-[~] nvd  status=analyzed  pkg=0  cpe=2
-      cpe: tukaani:xz
-      cpe: tukaani:xz target=linux_kernel
+[~] debian  status=active  pkg=3  cpe=0
+      pkg: xz-utils [deb] (debian:12)  fixed @ 5.6.1+really5.4.5-1 (< 5.6.1+really5.4.5-1)
+      pkg: xz-utils [deb] (debian:13)  fixed @ 5.6.1+really5.4.5-1 (< 5.6.1+really5.4.5-1)
+      pkg: xz-utils [deb] (debian:)  fixed @ 5.6.1+really5.4.5-1 (< 5.6.1+really5.4.5-1)
+[~] nvd  status=analyzed  pkg=0  cpe=1
+      cpe: tukaani:xz  fixed @ 5.6.2 (>= 5.6.0, < 5.6.2)
 [~] ubuntu  status=active  pkg=3  cpe=0
-      pkg: xz-utils [deb] (ubuntu:22)
-      pkg: xz-utils [deb] (ubuntu:24)
-      pkg: xz-utils [deb] (ubuntu:25)
+      pkg: xz-utils [deb] (ubuntu:22)  fixed @ 5.2.5-2ubuntu1.1
+      pkg: xz-utils [deb] (ubuntu:24)  fixed @ 5.6.1+really5.4.5-1
+      pkg: xz-utils [deb] (ubuntu:25)  fixed @ 5.6.1+really5.4.5-1ubuntu0.1
 ```
 
 `[~]` = matchable (grype can detect it), `[x]` = stub (entry exists but no match data).
 
-Also resolves GHSA IDs:
+Shows fix state, fix version, and version constraints from the database blobs.
+
+#### Compare the same CVE across two databases
+
+```bash
+smelt inspect db-a.db db-b.db CVE-2024-3094
+```
+
+```
+CVE: CVE-2024-3094
+
+=== DB-A ===
+  DB Built:  2026-03-18T19:06:09Z
+  Providers: 1
+  Matchable: 1/1
+  Packages:  0
+  CPEs:      1
+
+  [~] nvd  status=analyzed  pkg=0  cpe=1
+
+=== DB-B ===
+  DB Built:  2026-03-18T06:34:50Z
+  Providers: 4
+  Matchable: 4/4
+  Packages:  6
+  CPEs:      1
+
+  [~] debian  status=active  pkg=3  cpe=0
+  [~] nvd  status=analyzed  pkg=0  cpe=1
+  [~] ubuntu  status=active  pkg=3  cpe=0
+```
+
+#### Resolve GHSA IDs
 
 ```bash
 smelt inspect vulnerability.db GHSA-rxc8-2hfw-w2f5
 ```
 
-Returns the same result, resolving the alias to `CVE-2024-3094`.
+Resolves the alias to `CVE-2024-3094` and shows the same result.
+
+#### JSON output
+
+```bash
+smelt inspect --json vulnerability.db CVE-2024-3094
+smelt diff --json db-a.db db-b.db
+```
+
+All commands support `--json` for CI pipelines.
 
 ## How it works
 
@@ -146,6 +184,8 @@ smelt reads the grype-db v6 schema directly (`providers`, `vulnerability_handles
 | `smelt diff --matchable` | Only count entries with package/CPE data |
 | `smelt diff --state-a --state-b` | Compare mache state graphs |
 | `smelt inspect <db> <cve>` | Show all data for a CVE or GHSA |
+| `smelt inspect <a> <b> <cve>` | Compare the same CVE across two databases |
+| `--json` | JSON output (works with diff and inspect) |
 | `smelt version` | Print version |
 
 ## License
