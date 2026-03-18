@@ -66,13 +66,12 @@ smelt diff a.db b.db --state-a a-state.db --state-b b-state.db
 ## How it works
 
 ```mermaid
-flowchart LR
+flowchart TD
     A[vulnerability.db A] --> Q[SQLite queries]
     B[vulnerability.db B] --> Q
-    Q --> P[Per-provider counts]
-    P --> D[Delta report]
+    Q --> D[Delta report]
     Q -->|--provider X| CVE[CVE-level diff]
-    Q -->|--matchable| F[Filter to entries with\naffected_package or affected_cpe]
+    Q -->|--matchable| F[Filter to matchable entries]
 ```
 
 smelt reads the grype-db v6 schema directly (`providers`, `vulnerability_handles`, `affected_package_handles`, `affected_cpe_handles`). Falls back to v5 namespace queries for older databases.

@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/agentic-research/smelt/diff"
+	"github.com/agentic-research/smelt/inspect"
 )
 
 var (
@@ -52,6 +53,21 @@ Examples:
 	RunE: runDiff,
 }
 
+var inspectCmd = &cobra.Command{
+	Use:   "inspect <db> <cve>",
+	Short: "Show everything a database knows about a CVE",
+	Long: `Inspect shows all providers, packages, CPEs, and aliases for a CVE.
+
+Resolves GHSA IDs to CVEs via the alias table. Reports DB build time
+and whether each provider entry is matchable by grype.
+
+Examples:
+  smelt inspect vulnerability.db CVE-2026-2673
+  smelt inspect vulnerability.db GHSA-xxxx-yyyy-zzzz`,
+	Args: cobra.ExactArgs(2),
+	RunE: runInspect,
+}
+
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
@@ -67,6 +83,7 @@ func init() {
 	diffCmd.Flags().BoolVar(&diffMatchable, "matchable", false, "Only count entries with affected packages or CPEs (effective coverage)")
 
 	rootCmd.AddCommand(diffCmd)
+	rootCmd.AddCommand(inspectCmd)
 	rootCmd.AddCommand(versionCmd)
 }
 
@@ -168,6 +185,56 @@ func runDiffProvider(pathA, pathB, provider string) error {
 			fmt.Printf("  + %s\n", name)
 		}
 		fmt.Println()
+	}
+
+	return nil
+}
+
+func runInspect(cmd *cobra.Command, args []string) error {
+	result, err := inspect.CVE(args[0], args[1])
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("CVE:       %s\n", result.CVE)
+	fmt.Printf("DB Built:  %s\n", result.DBBuildTime)
+	fmt.Printf("Schema:    %s\n", result.SchemaVersion)
+
+	if len(result.Aliases) > 0 {
+		fmt.Printf("Aliases:   %s\n", strings.Join(result.Aliases, ", "))
+	}
+
+	fmt.Printf("Providers: %d\n\n", len(result.Providers))
+
+	for _, p := range result.Providers {
+		matchIcon := "x"
+		if p.Matchable {
+			matchIcon = "~"
+		}
+
+		name := p.VulnName
+		if name != result.CVE {
+			name = fmt.Sprintf("%s (via %s)", p.Provider, p.VulnName)
+		} else {
+			name = p.Provider
+		}
+
+		fmt.Printf("[%s] %s  status=%s  pkg=%d  cpe=%d\n", matchIcon, name, p.Status, p.PackageMatches, p.CPEMatches)
+
+		for _, pkg := range p.Packages {
+			distro := ""
+			if pkg.Distro != "" {
+				distro = " (" + pkg.Distro + ")"
+			}
+			fmt.Printf("      pkg: %s [%s]%s\n", pkg.Name, pkg.Ecosystem, distro)
+		}
+		for _, cpe := range p.CPEs {
+			ts := ""
+			if cpe.TargetSoftware != "" {
+				ts = " target=" + cpe.TargetSoftware
+			}
+			fmt.Printf("      cpe: %s:%s%s\n", cpe.Vendor, cpe.Product, ts)
+		}
 	}
 
 	return nil
