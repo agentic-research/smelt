@@ -63,17 +63,30 @@ func WithStatePaths(a, b string) Option {
 }
 
 // CompareDBs compares two vulnerability databases by provider and row count.
+// Paths can be .db files or archives (.tar.gz, .tar.zst, .tar.xz).
 func CompareDBs(pathA, pathB string, opts ...Option) (*Result, error) {
 	var cfg options
 	for _, o := range opts {
 		o(&cfg)
 	}
 
-	countsA, err := providerCounts(pathA, cfg.matchable)
+	dbA, cleanA, err := resolveDBPath(pathA)
+	if err != nil {
+		return nil, fmt.Errorf("resolving %s: %w", pathA, err)
+	}
+	defer cleanA()
+
+	dbB, cleanB, err := resolveDBPath(pathB)
+	if err != nil {
+		return nil, fmt.Errorf("resolving %s: %w", pathB, err)
+	}
+	defer cleanB()
+
+	countsA, err := providerCounts(dbA, cfg.matchable)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", pathA, err)
 	}
-	countsB, err := providerCounts(pathB, cfg.matchable)
+	countsB, err := providerCounts(dbB, cfg.matchable)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", pathB, err)
 	}
@@ -136,17 +149,30 @@ type ProviderDrillResult struct {
 }
 
 // DrillProvider compares the vulnerability names for a specific provider across two DBs.
+// Paths can be .db files or archives (.tar.gz, .tar.zst, .tar.xz).
 func DrillProvider(pathA, pathB, provider string, opts ...Option) (*ProviderDrillResult, error) {
 	var cfg options
 	for _, o := range opts {
 		o(&cfg)
 	}
 
-	namesA, err := providerVulnNames(pathA, provider, cfg.matchable)
+	dbA, cleanA, err := resolveDBPath(pathA)
+	if err != nil {
+		return nil, fmt.Errorf("resolving %s: %w", pathA, err)
+	}
+	defer cleanA()
+
+	dbB, cleanB, err := resolveDBPath(pathB)
+	if err != nil {
+		return nil, fmt.Errorf("resolving %s: %w", pathB, err)
+	}
+	defer cleanB()
+
+	namesA, err := providerVulnNames(dbA, provider, cfg.matchable)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", pathA, err)
 	}
-	namesB, err := providerVulnNames(pathB, provider, cfg.matchable)
+	namesB, err := providerVulnNames(dbB, provider, cfg.matchable)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", pathB, err)
 	}

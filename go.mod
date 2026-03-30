@@ -4,7 +4,9 @@ go 1.25.0
 
 require (
 	github.com/agentic-research/mache v0.6.0
+	github.com/klauspost/compress v1.18.5
 	github.com/spf13/cobra v1.10.2
+	github.com/ulikunitz/xz v0.5.15
 	modernc.org/sqlite v1.47.0
 )
 
