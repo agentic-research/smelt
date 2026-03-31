@@ -158,6 +158,20 @@ smelt diff --json db-a.db db-b.db
 
 All commands support `--json` for CI pipelines.
 
+## Parity scoring
+
+`smelt diff` computes a [Dice coefficient](https://en.wikipedia.org/wiki/S%C3%B8rensen%E2%80%93Dice_coefficient) over common providers to measure how similar two databases are:
+
+```
+Dice = 2 × |A ∩ B| / (|A| + |B|)
+```
+
+For each provider present in both databases, the overlap is `min(count_a, count_b)`. The coefficient ranges from 0% (no overlap) to 100% (identical). It penalizes both missing and extra entries symmetrically, and handles databases of different sizes without being misleading.
+
+Use `--matchable` for meaningful parity scores — without it, NVD stubs (entries with no CPE/package data that grype can't match against) inflate the counts.
+
+Archives (`.tar.gz`, `.tar.zst`, `.tar.xz`) are supported as inputs — the first `.db` file inside is extracted automatically.
+
 ## How it works
 
 ```mermaid
