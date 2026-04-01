@@ -3,12 +3,73 @@ package diff
 import (
 	"database/sql"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/agentic-research/mache/graph"
 	_ "modernc.org/sqlite"
 )
+
+// buildStateDB creates a mache state.db with the given CVE→state mappings.
+// The graph has a single root with a by-state/ subtree, matching the
+// structure produced by venturi's ExportGraph.
+func buildStateDB(t *testing.T, path string, states map[string]string) {
+	t.Helper()
+	store := graph.NewMemoryStore()
+	now := time.Now()
+
+	// Group CVEs by state first so we can build Children slices.
+	byStateName := map[string][]string{}
+	for cve, state := range states {
+		byStateName[state] = append(byStateName[state], cve)
+	}
+
+	// Build Children slices for each level — mache requires explicit child links.
+	var stateChildren []string
+	for state := range byStateName {
+		stateChildren = append(stateChildren, "venturi/by-state/"+state)
+	}
+
+	store.AddRoot(&graph.Node{
+		ID:       "venturi",
+		Mode:     fs.ModeDir,
+		ModTime:  now,
+		Children: []string{"venturi/by-state"},
+	})
+	store.AddNode(&graph.Node{
+		ID:       "venturi/by-state",
+		Mode:     fs.ModeDir,
+		ModTime:  now,
+		Children: stateChildren,
+	})
+
+	for state, cves := range byStateName {
+		var cveChildren []string
+		for _, cve := range cves {
+			cveChildren = append(cveChildren, "venturi/by-state/"+state+"/"+cve)
+		}
+		store.AddNode(&graph.Node{
+			ID:       "venturi/by-state/" + state,
+			Mode:     fs.ModeDir,
+			ModTime:  now,
+			Children: cveChildren,
+		})
+		for _, cve := range cves {
+			store.AddNode(&graph.Node{
+				ID:      "venturi/by-state/" + state + "/" + cve,
+				ModTime: now,
+				Data:    []byte(state),
+			})
+		}
+	}
+
+	if err := graph.ExportSQLite(store, path); err != nil {
+		t.Fatalf("ExportSQLite: %v", err)
+	}
+}
 
 // createTestDB creates a minimal v6-style vulnerability.db with providers and vulnerability_handles.
 func createTestDB(t *testing.T, dir, name string, providers map[string]int) string {
@@ -228,6 +289,92 @@ func TestCompareDBs_WithStateDBs(t *testing.T) {
 	// State comparison should be nil (failed gracefully)
 	if result.StateComparison != nil {
 		t.Error("expected nil state comparison for invalid state.db")
+	}
+}
+
+// TestStateTransitions_ExposedInResult verifies that individual CVE transitions
+// are returned in StateComparison.Transitions — not just the summary counts.
+// This is the point-in-time comparison capability: given two state.db snapshots,
+// tell me exactly which CVEs changed state.
+func TestStateTransitions_ExposedInResult(t *testing.T) {
+	dir := t.TempDir()
+
+	// Snapshot A: three CVEs in various states
+	stateA := filepath.Join(dir, "state-a.db")
+	buildStateDB(t, stateA, map[string]string{
+		"CVE-2024-0001": "analyzed",  // will move to fixed
+		"CVE-2024-0002": "analyzed",  // unchanged
+		"CVE-2024-0003": "not-fixed", // will be removed
+	})
+
+	// Snapshot B: CVE-0001 fixed, CVE-0003 gone, CVE-0004 new
+	stateB := filepath.Join(dir, "state-b.db")
+	buildStateDB(t, stateB, map[string]string{
+		"CVE-2024-0001": "fixed",    // transitioned
+		"CVE-2024-0002": "analyzed", // unchanged
+		"CVE-2024-0004": "analyzed", // new
+	})
+
+	dbA := createTestDB(t, dir, "a.db", map[string]int{"nvd": 1})
+	result, err := CompareDBs(dbA, dbA, WithStatePaths(stateA, stateB))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.StateComparison == nil {
+		t.Fatal("expected state comparison, got nil")
+	}
+
+	sc := result.StateComparison
+	if sc.StateChanges != 1 {
+		t.Errorf("StateChanges = %d, want 1 (CVE-0001 analyzed→fixed)", sc.StateChanges)
+	}
+	if sc.NewCVEs != 1 {
+		t.Errorf("NewCVEs = %d, want 1 (CVE-0004)", sc.NewCVEs)
+	}
+	if sc.RemovedCVEs != 1 {
+		t.Errorf("RemovedCVEs = %d, want 1 (CVE-0003)", sc.RemovedCVEs)
+	}
+	if len(sc.Transitions) != 3 {
+		t.Errorf("len(Transitions) = %d, want 3", len(sc.Transitions))
+	}
+
+	// Find the specific transition we care about most: analyzed→fixed
+	var found bool
+	for _, tr := range sc.Transitions {
+		if tr.CVE == "CVE-2024-0001" {
+			found = true
+			if tr.From != "analyzed" || tr.To != "fixed" {
+				t.Errorf("CVE-2024-0001 transition: from=%q to=%q, want analyzed→fixed", tr.From, tr.To)
+			}
+		}
+	}
+	if !found {
+		t.Error("CVE-2024-0001 transition not found in Transitions list")
+	}
+}
+
+// TestStateTransitions_EmptyToEmpty verifies no transitions when both graphs identical.
+func TestStateTransitions_EmptyToEmpty(t *testing.T) {
+	dir := t.TempDir()
+	states := map[string]string{
+		"CVE-2024-0001": "fixed",
+		"CVE-2024-0002": "analyzed",
+	}
+	stateA := filepath.Join(dir, "state-a.db")
+	buildStateDB(t, stateA, states)
+	stateB := filepath.Join(dir, "state-b.db")
+	buildStateDB(t, stateB, states)
+
+	dbA := createTestDB(t, dir, "a.db", map[string]int{"nvd": 1})
+	result, err := CompareDBs(dbA, dbA, WithStatePaths(stateA, stateB))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.StateComparison == nil {
+		t.Fatal("expected state comparison")
+	}
+	if len(result.StateComparison.Transitions) != 0 {
+		t.Errorf("expected 0 transitions for identical graphs, got %d", len(result.StateComparison.Transitions))
 	}
 }
 

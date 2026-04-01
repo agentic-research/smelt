@@ -18,13 +18,21 @@ type ProviderDiff struct {
 	Delta    int    `json:"delta"` // CountB - CountA
 }
 
+// StateTransition records a single CVE's state change between two snapshots.
+type StateTransition struct {
+	CVE  string `json:"cve"`
+	From string `json:"from"` // empty = new CVE
+	To   string `json:"to"`   // empty = removed CVE
+}
+
 // StateComparison holds the result of comparing two state graphs.
 type StateComparison struct {
-	NewCVEs      int `json:"new_cves"`
-	RemovedCVEs  int `json:"removed_cves"`
-	StateChanges int `json:"state_changes"`
-	ConflictsA   int `json:"conflicts_a"`
-	ConflictsB   int `json:"conflicts_b"`
+	NewCVEs      int               `json:"new_cves"`
+	RemovedCVEs  int               `json:"removed_cves"`
+	StateChanges int               `json:"state_changes"`
+	ConflictsA   int               `json:"conflicts_a"`
+	ConflictsB   int               `json:"conflicts_b"`
+	Transitions  []StateTransition `json:"transitions,omitempty"`
 }
 
 // Result holds the full comparison between two vulnerability databases.
@@ -406,11 +414,17 @@ func compareStateGraphs(pathA, pathB string) (*StateComparison, error) {
 		default:
 			sc.StateChanges++
 		}
+		sc.Transitions = append(sc.Transitions, StateTransition{
+			CVE:  t.cve,
+			From: t.fromState,
+			To:   t.toState,
+		})
 	}
 	return sc, nil
 }
 
 type stateTransition struct {
+	cve       string
 	fromState string
 	toState   string
 }
@@ -425,15 +439,15 @@ func diffGraphStates(prev, curr *graph.MemoryStore) []stateTransition {
 	for cve, currState := range currStates {
 		prevState, existed := prevStates[cve]
 		if !existed {
-			transitions = append(transitions, stateTransition{fromState: "", toState: currState})
+			transitions = append(transitions, stateTransition{cve: cve, fromState: "", toState: currState})
 		} else if prevState != currState {
-			transitions = append(transitions, stateTransition{fromState: prevState, toState: currState})
+			transitions = append(transitions, stateTransition{cve: cve, fromState: prevState, toState: currState})
 		}
 	}
 
 	for cve, prevState := range prevStates {
 		if _, exists := currStates[cve]; !exists {
-			transitions = append(transitions, stateTransition{fromState: prevState, toState: ""})
+			transitions = append(transitions, stateTransition{cve: cve, fromState: prevState, toState: ""})
 		}
 	}
 
